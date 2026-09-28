@@ -1,0 +1,3 @@
+This module provides an overview of Logging and Monitoring, focusing on building observability into high-load systems to ensure reliability, performance, and operational excellence. 
+
+By completing this module, you will gain the knowledge and skills to implement effective logging and monitoring strategies in high-load, distributed systems. This includes leveraging observability tools and best practices to ensure system reliability, optimize performance, and quickly identify and resolve issues in production environments.

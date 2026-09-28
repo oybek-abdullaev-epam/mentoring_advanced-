@@ -1,0 +1,1 @@
+The goal of this module is to provide an understanding of why software design is important, highlight the importance of defining key non-functional requirements (NFRs) such as scalability, availability, and maintainability before designing solutions, particularly for high-load systems.

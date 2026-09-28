@@ -1,0 +1,3 @@
+This module provides an overview of Application Layer Scaling options, focusing on strategies, patterns and tools.
+
+By completing this module, you will gain the knowledge and skills to design scalable, fault-tolerant, and high-performance application architectures. This includes leveraging modern data processing models, messaging systems, and advanced design patterns to meet the demands of distributed, high-load systems.

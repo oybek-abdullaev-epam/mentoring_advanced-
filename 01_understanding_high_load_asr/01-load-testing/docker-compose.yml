@@ -1,0 +1,37 @@
+version: "3.9"
+
+services:
+  server:
+    build:
+      context: ./src/Server
+      dockerfile: Dockerfile
+    container_name: load-test-server
+    ports:
+      - "5000:5000"
+    environment:
+      - ASPNETCORE_URLS=http://+:5000
+      - ASPNETCORE_ENVIRONMENT=Production
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  load-test:
+    build:
+      context: ./src/Tests
+      dockerfile: Dockerfile
+    container_name: load-test-runner
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      - SERVER_URL=http://server:5000
+    volumes:
+      - ./metrics:/app/metrics
+    command: >
+      dotnet LoadTest.dll
+        --server http://server:5000
+        --output /app/metrics
+
+volumes: {}
