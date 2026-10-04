@@ -1,0 +1,77 @@
+@startuml
+title UC3.2: Send Notification for Job Failure
+
+hide footbox
+skinparam shadowing false
+skinparam defaultFontName SansSerif
+skinparam ArrowColor #475569
+skinparam sequence {
+  ParticipantBackgroundColor #F8FAFC
+  ParticipantBorderColor #475569
+  LifeLineBorderColor #475569
+  GroupBackgroundColor #EFF6FF
+  GroupBorderColor #475569
+}
+
+participant "Job Orchestrator" as Orchestrator
+queue "Notification Queue" as Queue
+participant "Notification Handler" as Handler
+database "Notification\nPreferences Store" as Preferences
+database "Notification Store" as Store
+participant "Channel Adapter" as Adapter
+participant "External Provider" as Provider
+
+Orchestrator ->> Queue: Enqueue failure notification\n(UserId, JobId, FailureDetails)
+Queue ->> Handler: Consume notification request
+Handler -> Preferences: Load preferences (UserId, JobId)
+Preferences --> Handler: Enabled channels and destinations\n(configured through UC3.1)
+
+alt No enabled channels
+  Handler -> Store: Record overall outcome: Skipped
+else One or more enabled channels
+  loop For each enabled channel (sequentially)
+    Handler -> Store: Create pending channel notification\n(UserId, JobId, channel, FailureDetails)
+    Store --> Handler: NotificationId
+    Handler -> Handler: Resolve adapter and validate destination
+
+    alt Missing destination or unsupported adapter
+      Handler -> Store: Record channel Failure\n(NotificationId, configuration error)
+    else Adapter and destination available
+      Handler -> Handler: Prepare common failure message
+      Handler -> Adapter: Send (destination, failure message)
+      Adapter -> Adapter: Format message for this channel
+      Adapter -> Provider: Send via channel-specific provider API
+      Provider --> Adapter: Accepted or error
+      Adapter --> Handler: Success or Failure (error details)
+
+      alt Provider accepted the message
+        Handler -> Store: Record channel Success (NotificationId)
+      else Send failed
+        Handler -> Store: Record channel Failure\n(NotificationId, error details)
+      end
+    end
+
+    note over Handler, Store
+      Each channel gets a result.
+      A failure does not stop the next channel.
+    end note
+  end
+
+  Handler -> Handler: Aggregate channel results
+  note right of Handler
+    All succeeded: Success
+    Some succeeded: Partial Failure
+    None succeeded: Failure
+  end note
+  Handler -> Store: Record overall NotificationStatus
+end
+
+note over Adapter, Provider
+  Adapter/provider pairs: Email, Slack, Teams.
+  Select one pair per channel; new adapters
+  preserve the handler's send flow.
+  Success means provider acceptance,
+  not confirmed receipt or reading by the user.
+end note
+
+@enduml

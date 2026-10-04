@@ -1,0 +1,76 @@
+@startuml
+title UC3.2: Send Notification for Job Failure
+
+skinparam shadowing false
+skinparam defaultFontName SansSerif
+skinparam ArrowColor #475569
+skinparam activity {
+  BackgroundColor #F8FAFC
+  BorderColor #475569
+  DiamondBackgroundColor #EFF6FF
+  DiamondBorderColor #475569
+}
+
+|Notification Handler|
+start
+:Consume failure-notification request\nfrom Notification Queue\n(UserId, JobId, FailureDetails);
+:Load enabled channels and destinations\nfrom Notification Preferences Store;
+if (Any enabled channels?) then (yes)
+else (no)
+  :Record overall Skipped\nin Notification Store;
+  stop
+endif
+
+repeat
+  :Select next unprocessed channel;
+  :Create pending channel notification\nin Notification Store;
+  :Resolve adapter and validate destination;
+  if (Adapter supported and\ndestination available?) then (yes)
+    :Prepare common failure message;
+
+    |Channel Adapter|
+    :Format message for selected channel;
+    note right
+      Interchangeable adapters:
+      Email, Slack, Teams.
+    end note
+    :Send through external provider API;
+    :Return Success or Failure\n(with error details on failure);
+    note right
+      Success means provider acceptance,
+      not confirmed receipt or reading.
+    end note
+
+    |Notification Handler|
+    if (Provider accepted message?) then (yes)
+      :Record channel Success\nin Notification Store;
+    else (no)
+      :Record channel Failure and send error\nin Notification Store;
+    endif
+  else (no)
+    :Record channel Failure and configuration error\nin Notification Store;
+  endif
+
+  :Mark channel processed;
+  note right
+    Every channel gets one final result.
+    Failure does not stop the next channel.
+    Each channel is attempted once; no retries.
+  end note
+repeat while (More unprocessed channels?) is (yes) not (no)
+
+:Aggregate channel results;
+if (All channels succeeded?) then (yes)
+  :Set overall status to Success;
+else (no)
+  if (Any channel succeeded?) then (yes)
+    :Set overall status to Partial Failure;
+  else (no)
+    :Set overall status to Failure;
+  endif
+endif
+:Record overall NotificationStatus\nin Notification Store;
+:End notification processing;
+stop
+
+@enduml

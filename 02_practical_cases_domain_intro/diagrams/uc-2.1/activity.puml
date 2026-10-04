@@ -1,0 +1,81 @@
+@startuml
+title UC2.1: Execute a Job at a Scheduled Time
+
+skinparam shadowing false
+skinparam defaultFontName SansSerif
+skinparam ArrowColor #475569
+skinparam activity {
+  BackgroundColor #F8FAFC
+  BorderColor #475569
+  DiamondBackgroundColor #EFF6FF
+  DiamondBorderColor #475569
+}
+
+partition "Job Orchestrator" {
+  start
+  :Internal scheduler fires;
+  :Retrieve due jobs, snapshots, and schedules\nfrom Job Orchestrator Database;
+  if (Any jobs due?) then (yes)
+    :Split jobs into parallel batches;
+  else (no)
+    :End scheduling cycle;
+    stop
+  endif
+
+  :Begin one job execution attempt;
+  note right
+    The flow below runs independently for
+    each job in the parallel batches.
+    Ending an attempt does not stop other jobs.
+  end note
+
+  if (Singleton job?) then (yes)
+    :Attempt to acquire job lock\nin Job Orchestrator Database;
+    if (Lock acquired?) then (yes)
+    else (no)
+      :Enqueue lock-failure notification\nin Notification Queue (UC3.2);
+      :End this attempt without execution;
+      stop
+    endif
+  else (no: concurrent)
+  endif
+
+  :Enqueue execution trigger\nin Job Execution Queue;
+}
+
+partition "Job Runner" {
+  :Receive execution trigger;
+  if (Scheduled execution time\nstill in the future?) then (yes)
+    :Wait until scheduled execution time (UTC);
+  else (no)
+  endif
+
+  :Start configured job integration;
+  repeat
+    :Observe integration progress or completion;
+    :Stream available logs and output\nto execution log / output storage;
+  repeat while (Execution still running?) is (yes) not (no: success or failure)
+  note right
+    The loop tracks a single execution.
+    It does not retry or restart the integration.
+  end note
+
+  :Publish final execution status\n(success or failure) to Job Status Queue;
+}
+
+partition "Job Orchestrator" {
+  :Receive final execution status;
+  if (Lock acquired by this attempt?) then (yes)
+    :Release job lock\nin Job Orchestrator Database;
+  else (no)
+  endif
+
+  if (Execution failed?) then (yes)
+    :Enqueue execution-failure notification\nin Notification Queue (UC3.2);
+  else (no: success)
+  endif
+  :End this job execution attempt;
+  stop
+}
+
+@enduml

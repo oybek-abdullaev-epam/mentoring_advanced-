@@ -200,3 +200,9 @@ graph TD;
 #### 6. UC2.1 Visualization (Execute a Job At a Scheduled Time)
 
 1. [Conceptual Sequence Diagram](./diagrams/uc-2.1/sequence.md)
+2. [Conceptual Activity Diagram](./diagrams/uc-2.1/activity.md)
+
+#### 7. UC3.2 Visualization (Send Notification for Job Failure)
+
+1. [Conceptual Sequence Diagram](./diagrams/uc-3.2/sequence.md)
+2. [Conceptual Activity Diagram](./diagrams/uc-3.2/activity.md)
