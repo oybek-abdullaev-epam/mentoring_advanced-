@@ -1,0 +1,111 @@
+@startuml
+title UC 2.1: Execute a Job At a Scheduled Time - Database Schema Design
+
+skinparam shadowing false
+skinparam roundCorner 12
+skinparam defaultFontName Helvetica
+skinparam classAttributeIconSize 0
+skinparam class {
+  BackgroundColor #ffe6cc
+  BorderColor #d79b00
+  BorderThickness 2
+}
+skinparam rectangle {
+  BorderColor #56517e
+  BorderStyle dashed
+  BackgroundColor transparent
+}
+skinparam ArrowColor #333333
+
+rectangle "**Azure SQL Hyperscale 'job-orchestrator'**\n//Primary storage for Job Orchestrator. Stores schedule snapshots and run state//" as ORCH {
+
+  class JobScheduleSnapshot #dae8fc {
+    + [PK] JobId: UNIQUEIDENTIFIER (required)
+    + UserId: UNIQUEIDENTIFIER (required)
+    + ConcurrencyMode: ENUM Singleton / Concurrent (required)
+    + ScheduleType: ENUM OneTime / Recurring (required)
+    + RepeatStepSize: INT (optional)
+    + RepeatStepUnit: ENUM Minute / Hour / Day / Week / Month (optional)
+    + NextRunAt: DATETIME2 (required)
+    + LaunchDetails: NVARCHAR(MAX) JSON (required)
+    + Status: ENUM Active / Inactive / Deleted (required)
+    + Version: INT (required)
+    + CreatedAt: DATETIME2 (required)
+    + CurrentRunId: UNIQUEIDENTIFIER (optional, Singleton lock holder)
+    + LockedUntil: DATETIME2 (optional, lease = JobRun.Deadline)
+    --
+    IX (NextRunAt) WHERE Status = Active
+    <i>created in UC 1.1; lock columns added in UC 2.1</i>
+  }
+
+  class JobRun {
+    + [PK] Id: UNIQUEIDENTIFIER (required, = RunId)
+    + [FK] JobId: UNIQUEIDENTIFIER (required)
+    + ScheduledFor: DATETIME2 (required, = DateTimeUtc)
+    + Status: ENUM Pending / Running / Succeeded / Failed / TimedOut / LockFailed / Cancelled (required)
+    + ServiceBusSequenceNumber: BIGINT (optional, to cancel the scheduled message)
+    + Deadline: DATETIME2 (optional)
+    + StartedAt: DATETIME2 (optional)
+    + FinishedAt: DATETIME2 (optional)
+    + ErrorSummary: NVARCHAR(1000) (optional)
+    + CreatedAt: DATETIME2 (required, auto)
+    --
+    UQ (JobId, ScheduledFor)
+    IX (Status, Deadline)
+  }
+
+  class JobRunOutbox {
+    + [PK] Id: UNIQUEIDENTIFIER (required)
+    + [FK] RunId: UNIQUEIDENTIFIER (required)
+    + EventType: ENUM ExecuteJob / NotifyFailure (required)
+    + Payload: NVARCHAR(MAX) JSON (required)
+    + ScheduledEnqueueAt: DATETIME2 (required)
+    + CreatedAt: DATETIME2 (required, auto)
+    + ProcessedAt: DATETIME2 (optional)
+    + Attempts: INT (required, default 0)
+    --
+    IX (CreatedAt) WHERE ProcessedAt IS NULL
+  }
+
+  JobScheduleSnapshot "1" -- "0..*" JobRun : is executed as
+  JobRun "1" -- "0..*" JobRunOutbox : emits
+}
+
+rectangle "**Azure Cosmos DB 'job-outputs'**\n//Runner outputs and logs. Partitioned by RunId, TTL cleans up old data//" as COSMOS {
+
+  class JobOutputEntry #dae8fc {
+    + [id] Id: GUID (required)
+    + [PartitionKey] RunId: GUID (required)
+    + Timestamp: DATETIME (required)
+    + Level: ENUM Info / Warning / Error (required)
+    + Message: TEXT (required)
+    + ttl: INT (required)
+  }
+}
+
+JobRun -[#6c8ebf,bold]right---> JobOutputEntry : <b>execution produces</b>\n1 : 0..* via RunId\nlogical reference, no cross-DB FK
+
+note as ISO
+  <b>Isolation level: READ COMMITTED (RCSI)</b>
+  <b>Claim</b> (one transaction):
+  1. SELECT due snapshots WITH (UPDLOCK, READPAST): rows stay locked
+     until commit, so parallel claimers skip them instead of double-claiming.
+  2. Advance NextRunAt for every claimed job (OneTime -> Status = Inactive).
+  3. Singleton only: UPDATE ... SET CurrentRunId, LockedUntil
+     WHERE CurrentRunId IS NULL OR LockedUntil < now; 0 rows -> LockFailed.
+  4. INSERT JobRun (Pending) + JobRunOutbox (ExecuteJob).
+  UQ (JobId, ScheduledFor) makes the claim idempotent.
+  <b>Status updates:</b> compare-and-set on the expected status;
+  terminal states are never overwritten. Lock release:
+  ... WHERE CurrentRunId = @RunId (only the owning run).
+  <b>Job edited/deleted:</b> the Orchestrator cancels the scheduled message
+  by ServiceBusSequenceNumber, marks the run Cancelled, releases the lock.
+  Serializable is not needed: every conflict is on a single locked row.
+end note
+JobScheduleSnapshot -[hidden]right- ISO
+ISO -[hidden]down- JobOutputEntry
+
+note bottom of JobOutputEntry
+  <b>Consistency: Session</b>
+end note
+@enduml

@@ -1,0 +1,102 @@
+@startuml
+title UC 1.1: Create a New Job - Database Schema Design
+
+skinparam shadowing false
+skinparam roundCorner 12
+skinparam defaultFontName Helvetica
+skinparam classAttributeIconSize 0
+skinparam class {
+  BackgroundColor #ffe6cc
+  BorderColor #d79b00
+  BorderThickness 2
+}
+skinparam rectangle {
+  BorderColor #56517e
+  BorderStyle dashed
+  BackgroundColor transparent
+}
+skinparam ArrowColor #333333
+
+rectangle "**Azure SQL Database 'job-details'**\n//Primary storage for Job Manager. Stores user-provided Job definitions//" as JM {
+
+  class Job {
+    + [PK] Id: UNIQUEIDENTIFIER (required)
+    + UserId: UNIQUEIDENTIFIER (required)
+    + Name: NVARCHAR(200) (required)
+    + Description: NVARCHAR(1000) (optional)
+    + Status: ENUM Active / Inactive / Deleted (required, soft delete)
+    + ConcurrencyMode: ENUM Singleton / Concurrent (required)
+    + Version: INT (required, starts at 1, +1 per edit)
+    + CreatedAt: DATETIME2 (required, auto)
+    + UpdatedAt: DATETIME2 (required, auto)
+    --
+    UQ (UserId, Name) WHERE Status <> Deleted
+  }
+
+  class JobSchedule {
+    + [PK, FK] JobId: UNIQUEIDENTIFIER (required)
+    + ScheduleType: ENUM OneTime / Recurring (required)
+    + StartAt: DATETIME2 (required)
+    + RepeatStepSize: INT (optional)
+    + RepeatStepUnit: ENUM Minute / Hour / Day / Week / Month (optional)
+  }
+
+  class JobOutbox {
+    + [PK] Id: UNIQUEIDENTIFIER (required)
+    + [FK] JobId: UNIQUEIDENTIFIER (required)
+    + EventType: ENUM JobCreated / JobUpdated / JobDeleted (required)
+    + JobVersion: INT (required)
+    + Payload: NVARCHAR(MAX) JSON (required, Job Snapshot)
+    + CreatedAt: DATETIME2 (required, auto)
+    + ProcessedAt: DATETIME2 (optional)
+    + Attempts: INT (required, default 0)
+    --
+    IX (CreatedAt) WHERE ProcessedAt IS NULL
+  }
+
+  class JobLaunchDetails {
+    + [PK, FK] JobId: UNIQUEIDENTIFIER (required)
+    + Endpoint: NVARCHAR(2048) (required)
+    + HttpMethod: ENUM GET / POST / PUT / PATCH / DELETE (required)
+    + Headers: NVARCHAR(MAX) JSON (optional)
+    + Payload: NVARCHAR(MAX) JSON (optional)
+  }
+
+  Job "1" -- "1" JobSchedule : has
+  Job "1" -- "1" JobLaunchDetails : has
+  Job "1" -- "0..*" JobOutbox : emits
+}
+
+rectangle "**Azure SQL Hyperscale 'job-orchestrator'**\n//Primary storage for Job Orchestrator. Stores pre-calculated Job schedule snapshots//" as ORCH {
+
+  class JobScheduleSnapshot #dae8fc {
+    + [PK] JobId: UNIQUEIDENTIFIER (required, = Job.Id)
+    + UserId: UNIQUEIDENTIFIER (required)
+    + ConcurrencyMode: ENUM Singleton / Concurrent (required)
+    + ScheduleType: ENUM OneTime / Recurring (required)
+    + RepeatStepSize: INT (optional)
+    + RepeatStepUnit: ENUM Minute / Hour / Day / Week / Month (optional)
+    + NextRunAt: DATETIME2 (required)
+    + LaunchDetails: NVARCHAR(MAX) JSON (required)
+    + Status: ENUM Active / Inactive / Deleted (required)
+    + Version: INT (required, = Job.Version)
+    + CreatedAt: DATETIME2 (required)
+    --
+    IX (NextRunAt) WHERE Status = Active
+  }
+}
+
+Job -[#6c8ebf,bold]right-> JobScheduleSnapshot : <b>is synchronized with</b>\n(via Outbox + idempotent REST)\n1 : 0..1, logical reference, no cross-DB FK
+
+note as ISO
+  <b>Isolation level: READ COMMITTED (RCSI)</b>
+  <b>Job Manager:</b> one transaction inserts Job + JobSchedule +
+  JobLaunchDetails + JobOutbox. It only inserts new rows and never reads
+  then writes, so dirty, non-repeatable and phantom reads cannot affect it;
+  Serializable / Snapshot would add locking cost with no benefit.
+  UQ (UserId, Name) still takes key locks under RCSI -> 409 Conflict.
+  <b>Job Orchestrator:</b> the snapshot upsert is applied only if
+  incoming Version > stored Version, via INSERT + PK-violation fallback.
+end note
+JobLaunchDetails -[hidden]right- ISO
+@enduml
