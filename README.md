@@ -12,3 +12,5 @@
 9. [Application Layer Scaling](./06_application_scaling/)
 10. [IO Layer Scaling](./07_scaling_Io/)
 11. [Logging and Monitoring](./08_logging_and_monitoring/)
+
+- [Shared solution code (from lesson 4.2 onward)](./job-scheduler/)

@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/JobScheduler.Dal/JobScheduler.Dal.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/JobScheduler.Dal.IntegrationTests/JobScheduler.Dal.IntegrationTests.csproj" />
+    <Project Path="tests/JobScheduler.Dal.UnitTests/JobScheduler.Dal.UnitTests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,4 @@
+[*.cs]
+# Prefer primary constructors; keep an explicit constructor only when it has real logic.
+csharp_style_prefer_primary_constructors = true:warning
+dotnet_diagnostic.IDE0290.severity = warning
